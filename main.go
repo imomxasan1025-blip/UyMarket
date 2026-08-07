@@ -14,7 +14,7 @@ import (
 const telegramAPI = "https://api.telegram.org/bot"
 
 type Update struct {
-	UpdateID int `json:"update_id"`
+	UpdateID int      `json:"update_id"`
 	Message  *Message `json:"message"`
 }
 
@@ -69,9 +69,8 @@ func sendMessage(token string, chatID int64, text string, keyboard [][]string) {
 		}
 
 		request["reply_markup"] = map[string]interface{}{
-			"keyboard":          rows,
-			"resize_keyboard":   true,
-			"one_time_keyboard": false,
+			"keyboard":        rows,
+			"resize_keyboard": true,
 		}
 	}
 
@@ -197,9 +196,6 @@ func handleMessage(token string, chatID int64, text string) {
 			"👨‍💼 Менеджер\n\nНапишите ваш вопрос. Мы свяжемся с вами.",
 			russianMenu(),
 		)
-
-	case "🇺🇿 O‘zbekcha":
-		uzbekWelcome(token, chatID)
 
 	case "🏠 Uy-joy sotib olish":
 		sendMessage(
