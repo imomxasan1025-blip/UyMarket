@@ -431,14 +431,6 @@ func handleMessage(token string, chatID int64, text string) {
 			russianMenu(),
 		)
 
-	case "🇷🇺 Русский":
-		sendMessage(
-			token,
-			chatID,
-			"🏠 UyMarket\n\nВыберите действие:",
-			russianMenu(),
-		)
-
 	case "🏠 Uy-joy sotib olish":
 		sendMessage(
 			token,
