@@ -13,20 +13,26 @@ import (
 
 const telegramAPI = "https://api.telegram.org/bot"
 
-type UpdateResponse struct {
-	OK     bool `json:"ok"`
-	Result []struct {
-		UpdateID int `json:"update_id"`
-		Message  *struct {
-			Chat struct {
-				ID int64 `json:"id"`
-			} `json:"chat"`
-			Text string `json:"text"`
-		} `json:"message"`
-	} `json:"result"`
+type Update struct {
+	UpdateID int `json:"update_id"`
+	Message  *Message `json:"message"`
 }
 
-func telegramRequest(token, method string, data map[string]interface{}) error {
+type Message struct {
+	Chat Chat   `json:"chat"`
+	Text string `json:"text"`
+}
+
+type Chat struct {
+	ID int64 `json:"id"`
+}
+
+type UpdatesResponse struct {
+	OK     bool     `json:"ok"`
+	Result []Update `json:"result"`
+}
+
+func telegramRequest(token, method string, data interface{}) error {
 	body, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -45,27 +51,39 @@ func telegramRequest(token, method string, data map[string]interface{}) error {
 	return nil
 }
 
-func sendMessage(token string, chatID int64, text string) {
-	err := telegramRequest(token, "sendMessage", map[string]interface{}{
+func sendMessage(token string, chatID int64, text string, keyboard [][]string) {
+	request := map[string]interface{}{
 		"chat_id": chatID,
 		"text":    text,
-	})
-	if err != nil {
+	}
+
+	if keyboard != nil {
+		rows := make([][]map[string]string, len(keyboard))
+
+		for i, row := range keyboard {
+			for _, button := range row {
+				rows[i] = append(rows[i], map[string]string{
+					"text": button,
+				})
+			}
+		}
+
+		request["reply_markup"] = map[string]interface{}{
+			"keyboard":          rows,
+			"resize_keyboard":   true,
+			"one_time_keyboard": false,
+		}
+	}
+
+	if err := telegramRequest(token, "sendMessage", request); err != nil {
 		log.Println("Ошибка отправки:", err)
 	}
 }
 
-func getUpdates(token string, offset int) ([]struct {
-	UpdateID int `json:"update_id"`
-	Message  *struct {
-		Chat struct {
-			ID int64 `json:"id"`
-		} `json:"chat"`
-		Text string `json:"text"`
-	} `json:"message"`
-}, error) {
-
-	url := telegramAPI + token + "/getUpdates?timeout=30&offset=" + strconv.Itoa(offset)
+func getUpdates(token string, offset int) ([]Update, error) {
+	url := telegramAPI + token +
+		"/getUpdates?timeout=30&offset=" +
+		strconv.Itoa(offset)
 
 	resp, err := http.Get(url)
 	if err != nil {
@@ -73,18 +91,51 @@ func getUpdates(token string, offset int) ([]struct {
 	}
 	defer resp.Body.Close()
 
-	var result UpdateResponse
+	var result UpdatesResponse
 
-	err = json.NewDecoder(resp.Body).Decode(&result)
-	if err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, err
 	}
 
 	if !result.OK {
-		return nil, fmt.Errorf("Telegram API вернул ошибку")
+		return nil, fmt.Errorf("Telegram API error")
 	}
 
 	return result.Result, nil
+}
+
+func russianMenu() [][]string {
+	return [][]string{
+		{"🏠 Купить недвижимость", "➕ Продать недвижимость"},
+		{"🔎 Найти квартиру", "📋 Мои объявления"},
+		{"👨‍💼 Менеджер", "🇺🇿 O‘zbekcha"},
+	}
+}
+
+func uzbekMenu() [][]string {
+	return [][]string{
+		{"🏠 Uy-joy sotib olish", "➕ Uy-joy sotish"},
+		{"🔎 Kvartira qidirish", "📋 Mening e'lonlarim"},
+		{"👨‍💼 Menejer", "🇷🇺 Русский"},
+	}
+}
+
+func russianWelcome(token string, chatID int64) {
+	sendMessage(
+		token,
+		chatID,
+		"🏠 UyMarket\n\nДобро пожаловать!\n\nВыберите нужное действие:",
+		russianMenu(),
+	)
+}
+
+func uzbekWelcome(token string, chatID int64) {
+	sendMessage(
+		token,
+		chatID,
+		"🏠 UyMarket\n\nXush kelibsiz!\n\nKerakli bo‘limni tanlang:",
+		uzbekMenu(),
+	)
 }
 
 func handleMessage(token string, chatID int64, text string) {
@@ -92,50 +143,111 @@ func handleMessage(token string, chatID int64, text string) {
 	switch text {
 
 	case "/start":
+		sendMessage(
+			token,
+			chatID,
+			"🏠 UyMarket\n\nВыберите язык / Tilni tanlang:",
+			[][]string{
+				{"🇷🇺 Русский", "🇺🇿 O‘zbekcha"},
+			},
+		)
 
-		message := `🏠 Добро пожаловать в UyMarket!
+	case "🇷🇺 Русский":
+		russianWelcome(token, chatID)
 
-Я помогу вам найти или разместить недвижимость.
+	case "🇺🇿 O‘zbekcha":
+		uzbekWelcome(token, chatID)
 
-Выберите действие:
+	case "🏠 Купить недвижимость":
+		sendMessage(
+			token,
+			chatID,
+			"🏠 Купить недвижимость\n\nСкоро здесь появится каталог квартир и домов.",
+			russianMenu(),
+		)
 
-🏠 Купить квартиру
-🏢 Продать квартиру
-🔎 Найти квартиру
-📋 Мои объявления
-📞 Связаться с менеджером`
-
-		sendMessage(token, chatID, message)
-
-	case "🏠 Купить квартиру":
-
-		sendMessage(token, chatID,
-			"🏠 Поиск недвижимости\n\nСкоро здесь появится поиск квартир по району, цене, площади и количеству комнат.")
-
-	case "🏢 Продать квартиру":
-
-		sendMessage(token, chatID,
-			"🏢 Продажа квартиры\n\nСкоро я помогу вам разместить объявление о продаже квартиры.")
+	case "➕ Продать недвижимость":
+		sendMessage(
+			token,
+			chatID,
+			"➕ Продать недвижимость\n\nСкоро бот поможет вам бесплатно создать объявление.",
+			russianMenu(),
+		)
 
 	case "🔎 Найти квартиру":
-
-		sendMessage(token, chatID,
-			"🔎 Поиск квартиры\n\nНапишите район, бюджет или количество комнат — мы постепенно добавим автоматический поиск.")
+		sendMessage(
+			token,
+			chatID,
+			"🔎 Найти квартиру\n\nСкоро вы сможете выбрать район, количество комнат, площадь и бюджет.",
+			russianMenu(),
+		)
 
 	case "📋 Мои объявления":
+		sendMessage(
+			token,
+			chatID,
+			"📋 Мои объявления\n\nПока у вас нет опубликованных объявлений.",
+			russianMenu(),
+		)
 
-		sendMessage(token, chatID,
-			"📋 У вас пока нет объявлений.")
+	case "👨‍💼 Менеджер":
+		sendMessage(
+			token,
+			chatID,
+			"👨‍💼 Менеджер\n\nНапишите ваш вопрос. Мы свяжемся с вами.",
+			russianMenu(),
+		)
 
-	case "📞 Связаться с менеджером":
+	case "🇺🇿 O‘zbekcha":
+		uzbekWelcome(token, chatID)
 
-		sendMessage(token, chatID,
-			"📞 Связаться с менеджером\n\nНапишите ваш вопрос, и менеджер свяжется с вами.")
+	case "🏠 Uy-joy sotib olish":
+		sendMessage(
+			token,
+			chatID,
+			"🏠 Uy-joy sotib olish\n\nTez orada kvartira va uylar katalogi paydo bo‘ladi.",
+			uzbekMenu(),
+		)
+
+	case "➕ Uy-joy sotish":
+		sendMessage(
+			token,
+			chatID,
+			"➕ Uy-joy sotish\n\nTez orada bot sizga bepul e'lon yaratishga yordam beradi.",
+			uzbekMenu(),
+		)
+
+	case "🔎 Kvartira qidirish":
+		sendMessage(
+			token,
+			chatID,
+			"🔎 Kvartira qidirish\n\nTez orada hudud, xonalar soni, maydon va byudjet bo‘yicha qidirish mumkin bo‘ladi.",
+			uzbekMenu(),
+		)
+
+	case "📋 Mening e'lonlarim":
+		sendMessage(
+			token,
+			chatID,
+			"📋 Mening e'lonlarim\n\nHozircha sizda e'lonlar yo‘q.",
+			uzbekMenu(),
+		)
+
+	case "👨‍💼 Menejer":
+		sendMessage(
+			token,
+			chatID,
+			"👨‍💼 Menejer\n\nSavolingizni yozing. Biz siz bilan bog‘lanamiz.",
+			uzbekMenu(),
+		)
 
 	default:
-
-		sendMessage(token, chatID,
-			"Я пока не понял ваш запрос.\n\nНажмите /start, чтобы открыть меню UyMarket.")
+		sendMessage(
+			token,
+			chatID,
+			"Пожалуйста, выберите пункт меню.\n\nIltimos, menyudan bo‘limni tanlang.",
+			russianMenu(),
+		)
 	}
 }
 
@@ -159,7 +271,7 @@ func main() {
 
 	go func() {
 
-		log.Println("Telegram bot запущен")
+		log.Println("UyMarket Telegram bot started")
 
 		offset := 0
 
@@ -168,7 +280,7 @@ func main() {
 			updates, err := getUpdates(token, offset)
 
 			if err != nil {
-				log.Println("Ошибка Telegram:", err)
+				log.Println("Telegram error:", err)
 				time.Sleep(5 * time.Second)
 				continue
 			}
@@ -178,7 +290,6 @@ func main() {
 				offset = update.UpdateID + 1
 
 				if update.Message != nil {
-
 					handleMessage(
 						token,
 						update.Message.Chat.ID,
@@ -190,7 +301,7 @@ func main() {
 
 	}()
 
-	log.Println("Web server запущен на порту", port)
+	log.Println("Web server started on port", port)
 
 	log.Fatal(http.ListenAndServe(":"+port, nil))
 }
