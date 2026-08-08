@@ -141,10 +141,10 @@ func sendPhoto(token string, chatID int64, fileID string, caption string) {
 	}
 
 	if err := telegramRequest(token, "sendPhoto", request); err != nil {
-		log.Println("Ошибка отправки фото:", err)
+		log.Println("ОШИБКА ОТПРАВКИ ФОТО:", err)
+		log.Println("FILE_ID:", fileID)
 	}
 }
-
 func getUpdates(token string, offset int) ([]Update, error) {
 	url := telegramAPI + token +
 		"/getUpdates?timeout=30&offset=" +
