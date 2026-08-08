@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -29,8 +30,9 @@ type Chat struct {
 }
 
 type UpdatesResponse struct {
-	OK     bool     `json:"ok"`
-	Result []Update `json:"result"`
+	OK          bool     `json:"ok"`
+	Result      []Update `json:"result"`
+	Description string   `json:"description"`
 }
 
 type UserState struct {
@@ -45,10 +47,30 @@ type UserState struct {
 	Price    string
 }
 
+type Property struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	City        string `json:"city"`
+	District    string `json:"district"`
+	Rooms       string `json:"rooms"`
+	Area        string `json:"area"`
+	Floor       string `json:"floor"`
+	SellerPrice string `json:"seller_price"`
+	BuyerPrice  string `json:"buyer_price"`
+	Photo       string `json:"photo"`
+}
+
+type PropertiesResponse struct {
+	OK          bool       `json:"ok"`
+	Properties  []Property `json:"properties"`
+	Error       string     `json:"error"`
+}
+
 var users = make(map[int64]*UserState)
 var usersMutex sync.Mutex
 
-func telegramRequest(token string, method string, data interface{}) error {
+
+func telegramRequest(token, method string, data interface{}) error {
 	body, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -59,7 +81,6 @@ func telegramRequest(token string, method string, data interface{}) error {
 		"application/json",
 		bytes.NewBuffer(body),
 	)
-
 	if err != nil {
 		return err
 	}
@@ -72,6 +93,7 @@ func telegramRequest(token string, method string, data interface{}) error {
 
 	return nil
 }
+
 
 func sendMessage(token string, chatID int64, text string, keyboard [][]string) {
 	request := map[string]interface{}{
@@ -93,7 +115,6 @@ func sendMessage(token string, chatID int64, text string, keyboard [][]string) {
 		request["reply_markup"] = map[string]interface{}{
 			"keyboard":        rows,
 			"resize_keyboard": true,
-			"one_time_keyboard": false,
 		}
 	}
 
@@ -102,13 +123,13 @@ func sendMessage(token string, chatID int64, text string, keyboard [][]string) {
 	}
 }
 
+
 func getUpdates(token string, offset int) ([]Update, error) {
 	url := telegramAPI + token +
 		"/getUpdates?timeout=30&offset=" +
 		strconv.Itoa(offset)
 
 	resp, err := http.Get(url)
-
 	if err != nil {
 		return nil, err
 	}
@@ -122,11 +143,16 @@ func getUpdates(token string, offset int) ([]Update, error) {
 	}
 
 	if !result.OK {
+		if result.Description != "" {
+			return nil, fmt.Errorf("Telegram API error: %s", result.Description)
+		}
+
 		return nil, fmt.Errorf("Telegram API error")
 	}
 
 	return result.Result, nil
 }
+
 
 func russianMenu() [][]string {
 	return [][]string{
@@ -136,6 +162,7 @@ func russianMenu() [][]string {
 	}
 }
 
+
 func uzbekMenu() [][]string {
 	return [][]string{
 		{"🏠 Uy-joy sotib olish", "➕ Uy-joy sotish"},
@@ -143,6 +170,7 @@ func uzbekMenu() [][]string {
 		{"👨‍💼 Menejer", "🇷🇺 Русский"},
 	}
 }
+
 
 func propertyMenu() [][]string {
 	return [][]string{
@@ -154,31 +182,16 @@ func propertyMenu() [][]string {
 	}
 }
 
-func startSale(token string, chatID int64, language string) {
+
+func startSale(token string, chatID int64) {
 	usersMutex.Lock()
 
 	users[chatID] = &UserState{
 		Step:     1,
-		Language: language,
+		Language: "ru",
 	}
 
 	usersMutex.Unlock()
-
-	if language == "uz" {
-		sendMessage(
-			token,
-			chatID,
-			"➕ Uy-joy sotish\n\nKo‘chmas mulk turini tanlang:",
-			[][]string{
-				{"🏢 Kvartira"},
-				{"🏠 Uy"},
-				{"🏪 Tijorat ko‘chmas mulki"},
-				{"🌳 Yer uchastkasi"},
-				{"⬅️ Orqaga"},
-			},
-		)
-		return
-	}
 
 	sendMessage(
 		token,
@@ -187,6 +200,7 @@ func startSale(token string, chatID int64, language string) {
 		propertyMenu(),
 	)
 }
+
 
 func processSale(token string, chatID int64, text string) {
 	usersMutex.Lock()
@@ -198,51 +212,39 @@ func processSale(token string, chatID int64, text string) {
 		return
 	}
 
-	language := user.Language
-
 	switch user.Step {
 
 	case 1:
-		if text == "⬅️ Назад" || text == "⬅️ Orqaga" {
+
+		if text == "⬅️ Назад" {
 			delete(users, chatID)
 			usersMutex.Unlock()
 
-			if language == "uz" {
-				sendMessage(
-					token,
-					chatID,
-					"🏠 Asosiy menyu:",
-					uzbekMenu(),
-				)
-			} else {
-				sendMessage(
-					token,
-					chatID,
-					"🏠 Главное меню:",
-					russianMenu(),
-				)
-			}
+			sendMessage(
+				token,
+				chatID,
+				"Главное меню:",
+				russianMenu(),
+			)
 
 			return
 		}
 
-		if language == "ru" {
-			if text != "🏢 Квартира" &&
-				text != "🏠 Дом" &&
-				text != "🏪 Коммерческая недвижимость" &&
-				text != "🌳 Земельный участок" {
+		if text != "🏢 Квартира" &&
+			text != "🏠 Дом" &&
+			text != "🏪 Коммерческая недвижимость" &&
+			text != "🌳 Земельный участок" {
 
-				usersMutex.Unlock()
+			usersMutex.Unlock()
 
-				sendMessage(
-					token,
-					chatID,
-					"Пожалуйста, выберите тип недвижимости кнопкой.",
-					propertyMenu(),
-				)
+			sendMessage(
+				token,
+				chatID,
+				"Пожалуйста, выберите тип недвижимости кнопкой.",
+				propertyMenu(),
+			)
 
-				return
-			}
+			return
 		}
 
 		user.Type = text
@@ -250,138 +252,90 @@ func processSale(token string, chatID int64, text string) {
 
 		usersMutex.Unlock()
 
-		if language == "uz" {
-			sendMessage(
-				token,
-				chatID,
-				"📍 Ob'ekt qaysi shaharda joylashgan?\n\nShahar nomini yozing.",
-				nil,
-			)
-		} else {
-			sendMessage(
-				token,
-				chatID,
-				"📍 В каком городе находится объект?\n\nНапишите город.",
-				nil,
-			)
-		}
+		sendMessage(
+			token,
+			chatID,
+			"📍 В каком городе находится объект?\n\nНапишите город.",
+			nil,
+		)
 
 	case 2:
+
 		user.City = text
 		user.Step = 3
 
 		usersMutex.Unlock()
 
-		if language == "uz" {
-			sendMessage(
-				token,
-				chatID,
-				"📍 Qaysi tumanda joylashgan?\n\nTuman nomini yozing.",
-				nil,
-			)
-		} else {
-			sendMessage(
-				token,
-				chatID,
-				"📍 В каком районе находится объект?\n\nНапишите район.",
-				nil,
-			)
-		}
+		sendMessage(
+			token,
+			chatID,
+			"📍 В каком районе находится объект?\n\nНапишите район.",
+			nil,
+		)
 
 	case 3:
+
 		user.District = text
 		user.Step = 4
 
 		usersMutex.Unlock()
 
-		if language == "uz" {
-			sendMessage(
-				token,
-				chatID,
-				"🛏 Nechta xona?\n\nMasalan: 2",
-				nil,
-			)
-		} else {
-			sendMessage(
-				token,
-				chatID,
-				"🛏 Сколько комнат?\n\nНапример: 2",
-				nil,
-			)
-		}
+		sendMessage(
+			token,
+			chatID,
+			"🛏 Сколько комнат?\n\nНапример: 2",
+			nil,
+		)
 
 	case 4:
+
 		user.Rooms = text
 		user.Step = 5
 
 		usersMutex.Unlock()
 
-		if language == "uz" {
-			sendMessage(
-				token,
-				chatID,
-				"📐 Maydoni qancha?\n\nMasalan: 65 m²",
-				nil,
-			)
-		} else {
-			sendMessage(
-				token,
-				chatID,
-				"📐 Какая площадь?\n\nНапример: 65 м²",
-				nil,
-			)
-		}
+		sendMessage(
+			token,
+			chatID,
+			"📐 Какая площадь?\n\nНапример: 65 м²",
+			nil,
+		)
 
 	case 5:
+
 		user.Area = text
 		user.Step = 6
 
 		usersMutex.Unlock()
 
-		if language == "uz" {
-			sendMessage(
-				token,
-				chatID,
-				"🏢 Qaysi qavat va uy nechta qavatli?\n\nMasalan: 7/16",
-				nil,
-			)
-		} else {
-			sendMessage(
-				token,
-				chatID,
-				"🏢 Какой этаж и сколько этажей в доме?\n\nНапример: 7/16",
-				nil,
-			)
-		}
+		sendMessage(
+			token,
+			chatID,
+			"🏢 Какой этаж и сколько этажей в доме?\n\nНапример: 7/16",
+			nil,
+		)
 
 	case 6:
+
 		user.Floor = text
 		user.Step = 7
 
 		usersMutex.Unlock()
 
-		if language == "uz" {
-			sendMessage(
-				token,
-				chatID,
-				"💰 Sotuvchi qancha pul so‘rayapti?\n\nMasalan: 50000 USD",
-				nil,
-			)
-		} else {
-			sendMessage(
-				token,
-				chatID,
-				"💰 Какая цена продавца?\n\nНапример: 50000 USD",
-				nil,
-			)
-		}
+		sendMessage(
+			token,
+			chatID,
+			"💰 Какая цена продавца?\n\nНапример: 50000 USD",
+			nil,
+		)
 
 	case 7:
+
 		user.Price = text
 		user.Step = 8
 
 		summary := fmt.Sprintf(
-			"📋 Заявка на продажу\n\n"+
+			"📋 Проверьте объявление:\n\n"+
 				"🏷 Тип: %s\n"+
 				"📍 Город: %s\n"+
 				"📍 Район: %s\n"+
@@ -406,60 +360,69 @@ func processSale(token string, chatID int64, text string) {
 			chatID,
 			summary,
 			[][]string{
-				{"✅ Отправить заявку"},
+				{"✅ Опубликовать"},
 				{"❌ Отменить"},
 			},
 		)
 
 	case 8:
+
 		if text == "❌ Отменить" {
 			delete(users, chatID)
+
 			usersMutex.Unlock()
 
 			sendMessage(
 				token,
 				chatID,
-				"❌ Заявка отменена.",
+				"❌ Объявление отменено.",
 				russianMenu(),
 			)
 
 			return
 		}
 
-		if text == "✅ Отправить заявку" {
-			data := map[string]string{
-				"type":     user.Type,
-				"city":     user.City,
-				"district": user.District,
-				"rooms":    user.Rooms,
-				"area":     user.Area,
-				"floor":    user.Floor,
-				"price":    user.Price,
-			}
+		if text == "✅ Опубликовать" {
 
-			delete(users, chatID)
+			data := map[string]string{
+				"type":         user.Type,
+				"city":         user.City,
+				"district":     user.District,
+				"rooms":        user.Rooms,
+				"area":         user.Area,
+				"floor":        user.Floor,
+				"price":        user.Price,
+				"buyer_price":  "",
+				"photo":        "",
+			}
 
 			usersMutex.Unlock()
 
 			err := sendToGoogleSheets(data)
 
 			if err != nil {
-				log.Println("Ошибка сохранения заявки:", err)
+				log.Println("Ошибка сохранения объявления:", err)
 
 				sendMessage(
 					token,
 					chatID,
-					"❌ Не удалось сохранить заявку.\n\nПопробуйте ещё раз.",
+					"❌ Не удалось сохранить объявление.\n\n"+
+						"Попробуйте ещё раз.",
 					russianMenu(),
 				)
 
 				return
 			}
 
+			usersMutex.Lock()
+			delete(users, chatID)
+			usersMutex.Unlock()
+
 			sendMessage(
 				token,
 				chatID,
-				"✅ Заявка успешно отправлена!\n\nСпасибо. Менеджер свяжется с вами.",
+				"✅ Объявление успешно добавлено!\n\n"+
+					"Менеджер установит цену для покупателя.",
 				russianMenu(),
 			)
 
@@ -469,12 +432,142 @@ func processSale(token string, chatID int64, text string) {
 		usersMutex.Unlock()
 
 	default:
-		delete(users, chatID)
 		usersMutex.Unlock()
 	}
 }
 
+
+func getProperties() ([]Property, error) {
+
+	url := os.Getenv("GOOGLE_SHEETS_URL")
+
+	if url == "" {
+		return nil, fmt.Errorf("GOOGLE_SHEETS_URL не найден")
+	}
+
+	if strings.Contains(url, "?") {
+		url += "&action=properties"
+	} else {
+		url += "?action=properties"
+	}
+
+	resp, err := http.Get(url)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	var result PropertiesResponse
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	if !result.OK {
+		return nil, fmt.Errorf(
+			"Google Apps Script: %s",
+			result.Error,
+		)
+	}
+
+	return result.Properties, nil
+}
+
+
+func showProperties(token string, chatID int64) {
+
+	properties, err := getProperties()
+
+	if err != nil {
+		log.Println("Ошибка получения недвижимости:", err)
+
+		sendMessage(
+			token,
+			chatID,
+			"❌ Не удалось загрузить объявления.\n\nПопробуйте позже.",
+			russianMenu(),
+		)
+
+		return
+	}
+
+	if len(properties) == 0 {
+
+		sendMessage(
+			token,
+			chatID,
+			"🏠 Сейчас опубликованных объявлений нет.",
+			russianMenu(),
+		)
+
+		return
+	}
+
+	shown := 0
+
+	for _, property := range properties {
+
+		// Покупателю показываем только цену покупателя.
+		// Цена продавца здесь специально НЕ используется.
+
+		if property.BuyerPrice == "" {
+			continue
+		}
+
+		text := fmt.Sprintf(
+			"🏠 Недвижимость #%s\n\n"+
+				"🏷 Тип: %s\n"+
+				"📍 Город: %s\n"+
+				"📍 Район: %s\n"+
+				"🛏 Комнаты: %s\n"+
+				"📐 Площадь: %s\n"+
+				"🏢 Этаж: %s\n"+
+				"💰 Цена: %s",
+			property.ID,
+			property.Type,
+			property.City,
+			property.District,
+			property.Rooms,
+			property.Area,
+			property.Floor,
+			property.BuyerPrice,
+		)
+
+		sendMessage(
+			token,
+			chatID,
+			text,
+			nil,
+		)
+
+		shown++
+	}
+
+	if shown == 0 {
+
+		sendMessage(
+			token,
+			chatID,
+			"🏠 Пока нет объявлений с установленной ценой для покупателя.",
+			russianMenu(),
+		)
+
+		return
+	}
+
+	sendMessage(
+		token,
+		chatID,
+		"Выберите следующий раздел:",
+		russianMenu(),
+	)
+}
+
+
 func handleMessage(token string, chatID int64, text string) {
+
 	usersMutex.Lock()
 
 	_, inSale := users[chatID]
@@ -489,6 +582,7 @@ func handleMessage(token string, chatID int64, text string) {
 	switch text {
 
 	case "/start":
+
 		sendMessage(
 			token,
 			chatID,
@@ -498,15 +592,8 @@ func handleMessage(token string, chatID int64, text string) {
 			},
 		)
 
-	case "/menu":
-		sendMessage(
-			token,
-			chatID,
-			"🏠 Главное меню:",
-			russianMenu(),
-		)
-
 	case "🇷🇺 Русский":
+
 		sendMessage(
 			token,
 			chatID,
@@ -515,6 +602,7 @@ func handleMessage(token string, chatID int64, text string) {
 		)
 
 	case "🇺🇿 O‘zbekcha":
+
 		sendMessage(
 			token,
 			chatID,
@@ -523,76 +611,89 @@ func handleMessage(token string, chatID int64, text string) {
 		)
 
 	case "➕ Продать недвижимость":
-		startSale(token, chatID, "ru")
 
-	case "➕ Uy-joy sotish":
-		startSale(token, chatID, "uz")
+		startSale(token, chatID)
 
 	case "🏠 Купить недвижимость":
-		sendMessage(
-			token,
-			chatID,
-			"🏠 Каталог недвижимости\n\nСкоро здесь появятся реальные объявления.",
-			russianMenu(),
-		)
+
+		showProperties(token, chatID)
 
 	case "🔎 Найти квартиру":
+
 		sendMessage(
 			token,
 			chatID,
-			"🔎 Поиск квартиры\n\nСкоро здесь появится поиск по району, цене, площади и комнатам.",
+			"🔎 Поиск квартиры\n\n"+
+				"Скоро здесь появится поиск по району, цене, площади и комнатам.",
 			russianMenu(),
 		)
 
 	case "📋 Мои объявления":
+
 		sendMessage(
 			token,
 			chatID,
-			"📋 Мои объявления\n\nПока объявлений нет.",
+			"📋 Мои объявления\n\n"+
+				"Пока объявлений нет.",
 			russianMenu(),
 		)
 
 	case "👨‍💼 Менеджер":
+
 		sendMessage(
 			token,
 			chatID,
-			"👨‍💼 Менеджер\n\nНапишите ваш вопрос.",
+			"👨‍💼 Менеджер\n\n"+
+				"Напишите ваш вопрос.",
 			russianMenu(),
 		)
 
 	case "🏠 Uy-joy sotib olish":
+
 		sendMessage(
 			token,
 			chatID,
-			"🏠 Uy-joy sotib olish\n\nTez orada e'lonlar paydo bo‘ladi.",
+			"🏠 Uy-joy sotib olish\n\n"+
+				"Tez orada e'lonlar paydo bo‘ladi.",
 			uzbekMenu(),
 		)
 
+	case "➕ Uy-joy sotish":
+
+		startSale(token, chatID)
+
 	case "🔎 Kvartira qidirish":
+
 		sendMessage(
 			token,
 			chatID,
-			"🔎 Kvartira qidirish\n\nTez orada qidiruv ishlaydi.",
+			"🔎 Kvartira qidirish\n\n"+
+				"Tez orada qidiruv ishlaydi.",
 			uzbekMenu(),
 		)
 
 	case "📋 Mening e'lonlarim":
+
 		sendMessage(
 			token,
 			chatID,
-			"📋 Mening e'lonlarim\n\nHozircha e'lonlar yo‘q.",
+			"📋 Mening e'lonlarim\n\n"+
+				"Hozircha e'lonlar yo‘q.",
 			uzbekMenu(),
 		)
 
 	case "👨‍💼 Menejer":
+
 		sendMessage(
 			token,
 			chatID,
-			"👨‍💼 Menejer\n\nSavolingizni yozing.",
+			"👨‍💼 Menejer\n\n"+
+				"Savolingizni yozing.",
 			uzbekMenu(),
 		)
 
 	default:
+
 		sendMessage(
 			token,
 			chatID,
@@ -602,7 +703,9 @@ func handleMessage(token string, chatID int64, text string) {
 	}
 }
 
+
 func sendToGoogleSheets(data map[string]string) error {
+
 	url := os.Getenv("GOOGLE_SHEETS_URL")
 
 	if url == "" {
@@ -637,7 +740,9 @@ func sendToGoogleSheets(data map[string]string) error {
 	return nil
 }
 
+
 func main() {
+
 	token := os.Getenv("BOT_TOKEN")
 
 	if token == "" {
@@ -655,23 +760,29 @@ func main() {
 	})
 
 	go func() {
+
 		log.Println("UyMarket Telegram bot started")
 
 		offset := 0
 
 		for {
+
 			updates, err := getUpdates(token, offset)
 
 			if err != nil {
 				log.Println("Telegram error:", err)
+
 				time.Sleep(5 * time.Second)
+
 				continue
 			}
 
 			for _, update := range updates {
+
 				offset = update.UpdateID + 1
 
 				if update.Message != nil {
+
 					handleMessage(
 						token,
 						update.Message.Chat.ID,
@@ -680,6 +791,7 @@ func main() {
 				}
 			}
 		}
+
 	}()
 
 	log.Println("Web server started on port", port)
