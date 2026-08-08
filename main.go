@@ -323,68 +323,63 @@ func processSale(token string, chatID int64, text string) {
 
 	case 8:
 
-		if text == "❌ Отменить" {
-			delete(users, chatID)
-			usersMutex.Unlock()
-
-			sendMessage(
-				token,
-				chatID,
-				"❌ Объявление отменено.",
-				russianMenu(),
-			)
-			return
-		}
-
-		if text == "✅ Опубликовать" {
-
-    data := map[string]string{
-        "type":     user.Type,
-        "city":     user.City,
-        "district": user.District,
-        "rooms":    user.Rooms,
-        "area":     user.Area,
-        "floor":    user.Floor,
-        "price":    user.Price,
-    }
-
-    usersMutex.Unlock()
-
-    err := sendToGoogleSheets(data)
-
-    if err != nil {
+    if text == "❌ Отменить" {
+        delete(users, chatID)
+        usersMutex.Unlock()
 
         sendMessage(
             token,
             chatID,
-            "❌ Не удалось сохранить объявление.\n\nПопробуйте ещё раз.",
+            "❌ Объявление отменено.",
             russianMenu(),
         )
-
         return
     }
 
-    usersMutex.Lock()
-    delete(users, chatID)
+    if text == "✅ Опубликовать" {
+
+        data := map[string]string{
+            "type":     user.Type,
+            "city":     user.City,
+            "district": user.District,
+            "rooms":    user.Rooms,
+            "area":     user.Area,
+            "floor":    user.Floor,
+            "price":    user.Price,
+        }
+
+        usersMutex.Unlock()
+
+        err := sendToGoogleSheets(data)
+
+        if err != nil {
+            sendMessage(
+                token,
+                chatID,
+                "❌ Не удалось сохранить объявление.\n\nПопробуйте ещё раз.",
+                russianMenu(),
+            )
+            return
+        }
+
+        usersMutex.Lock()
+        delete(users, chatID)
+        usersMutex.Unlock()
+
+        sendMessage(
+            token,
+            chatID,
+            "✅ Объявление успешно опубликовано!\n\n"+
+                "Оно сохранено в базе UyMarket.",
+            russianMenu(),
+        )
+        return
+    }
+
     usersMutex.Unlock()
 
-    sendMessage(
-        token,
-        chatID,
-        "✅ Объявление успешно опубликовано!\n\n"+
-            "Оно сохранено в базе UyMarket.",
-        russianMenu(),
-    )
-
-    return
-}
-		}
-
-		usersMutex.Unlock()
-
-	default:
-		usersMutex.Unlock()
-	}
+default:
+    usersMutex.Unlock()
 }
 
 func handleMessage(token string, chatID int64, text string) {
