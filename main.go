@@ -59,12 +59,16 @@ func telegramRequest(token, method string, data interface{}) error {
 		"application/json",
 		bytes.NewBuffer(body),
 	)
-
 	if err != nil {
 		return err
 	}
 
 	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("Telegram HTTP error: %s", resp.Status)
+	}
+
 	return nil
 }
 
@@ -102,7 +106,6 @@ func getUpdates(token string, offset int) ([]Update, error) {
 		strconv.Itoa(offset)
 
 	resp, err := http.Get(url)
-
 	if err != nil {
 		return nil, err
 	}
@@ -167,7 +170,6 @@ func startSale(token string, chatID int64) {
 }
 
 func processSale(token string, chatID int64, text string) {
-
 	usersMutex.Lock()
 
 	user, exists := users[chatID]
@@ -322,68 +324,69 @@ func processSale(token string, chatID int64, text string) {
 		)
 
 	case 8:
+		if text == "❌ Отменить" {
+			delete(users, chatID)
+			usersMutex.Unlock()
 
-    if text == "❌ Отменить" {
-        delete(users, chatID)
-        usersMutex.Unlock()
+			sendMessage(
+				token,
+				chatID,
+				"❌ Объявление отменено.",
+				russianMenu(),
+			)
+			return
+		}
 
-        sendMessage(
-            token,
-            chatID,
-            "❌ Объявление отменено.",
-            russianMenu(),
-        )
-        return
-    }
+		if text == "✅ Опубликовать" {
+			data := map[string]string{
+				"type":     user.Type,
+				"city":     user.City,
+				"district": user.District,
+				"rooms":    user.Rooms,
+				"area":     user.Area,
+				"floor":    user.Floor,
+				"price":    user.Price,
+			}
 
-    if text == "✅ Опубликовать" {
+			usersMutex.Unlock()
 
-        data := map[string]string{
-            "type":     user.Type,
-            "city":     user.City,
-            "district": user.District,
-            "rooms":    user.Rooms,
-            "area":     user.Area,
-            "floor":    user.Floor,
-            "price":    user.Price,
-        }
+			err := sendToGoogleSheets(data)
 
-        usersMutex.Unlock()
+			if err != nil {
+				log.Println("Ошибка сохранения объявления:", err)
 
-        err := sendToGoogleSheets(data)
+				sendMessage(
+					token,
+					chatID,
+					"❌ Не удалось сохранить объявление.\n\n"+
+						"Попробуйте ещё раз.",
+					russianMenu(),
+				)
+				return
+			}
 
-        if err != nil {
-            sendMessage(
-                token,
-                chatID,
-                "❌ Не удалось сохранить объявление.\n\nПопробуйте ещё раз.",
-                russianMenu(),
-            )
-            return
-        }
+			usersMutex.Lock()
+			delete(users, chatID)
+			usersMutex.Unlock()
 
-        usersMutex.Lock()
-        delete(users, chatID)
-        usersMutex.Unlock()
+			sendMessage(
+				token,
+				chatID,
+				"✅ Объявление успешно опубликовано!\n\n"+
+					"Оно сохранено в базе UyMarket.",
+				russianMenu(),
+			)
+			return
+		}
 
-        sendMessage(
-            token,
-            chatID,
-            "✅ Объявление успешно опубликовано!\n\n"+
-                "Оно сохранено в базе UyMarket.",
-            russianMenu(),
-        )
-        return
-    }
+		usersMutex.Unlock()
 
-    usersMutex.Unlock()
-
-default:
-    usersMutex.Unlock()
+	default:
+		usersMutex.Unlock()
+	}
 }
 
 func handleMessage(token string, chatID int64, text string) {
-
 	usersMutex.Lock()
 	_, inSale := users[chatID]
 	usersMutex.Unlock()
@@ -428,7 +431,8 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"🏠 Каталог недвижимости\n\nСкоро здесь появятся реальные объявления.",
+			"🏠 Каталог недвижимости\n\n"+
+				"Скоро здесь появятся реальные объявления.",
 			russianMenu(),
 		)
 
@@ -436,7 +440,8 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"🔎 Поиск квартиры\n\nСкоро здесь появится поиск по району, цене, площади и комнатам.",
+			"🔎 Поиск квартиры\n\n"+
+				"Скоро здесь появится поиск по району, цене, площади и комнатам.",
 			russianMenu(),
 		)
 
@@ -444,7 +449,8 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"📋 Мои объявления\n\nПока объявлений нет.",
+			"📋 Мои объявления\n\n"+
+				"Пока объявлений нет.",
 			russianMenu(),
 		)
 
@@ -452,7 +458,8 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"👨‍💼 Менеджер\n\nНапишите ваш вопрос.",
+			"👨‍💼 Менеджер\n\n"+
+				"Напишите ваш вопрос.",
 			russianMenu(),
 		)
 
@@ -460,7 +467,8 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"🏠 Uy-joy sotib olish\n\nTez orada e'lonlar paydo bo‘ladi.",
+			"🏠 Uy-joy sotib olish\n\n"+
+				"Tez orada e'lonlar paydo bo‘ladi.",
 			uzbekMenu(),
 		)
 
@@ -471,7 +479,8 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"🔎 Kvartira qidirish\n\nTez orada qidiruv ishlaydi.",
+			"🔎 Kvartira qidirish\n\n"+
+				"Tez orada qidiruv ishlaydi.",
 			uzbekMenu(),
 		)
 
@@ -479,7 +488,8 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"📋 Mening e'lonlarim\n\nHozircha e'lonlar yo‘q.",
+			"📋 Mening e'lonlarim\n\n"+
+				"Hozircha e'lonlar yo‘q.",
 			uzbekMenu(),
 		)
 
@@ -487,7 +497,8 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"👨‍💼 Menejer\n\nSavolingizni yozing.",
+			"👨‍💼 Menejer\n\n"+
+				"Savolingizni yozing.",
 			uzbekMenu(),
 		)
 
@@ -501,8 +512,40 @@ func handleMessage(token string, chatID int64, text string) {
 	}
 }
 
-func main() {
+func sendToGoogleSheets(data map[string]string) error {
+	url := os.Getenv("GOOGLE_SHEETS_URL")
 
+	if url == "" {
+		return fmt.Errorf("GOOGLE_SHEETS_URL не найден")
+	}
+
+	body, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	resp, err := http.Post(
+		url,
+		"application/json",
+		bytes.NewBuffer(body),
+	)
+	if err != nil {
+		return err
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf(
+			"Google Apps Script вернул статус %d",
+			resp.StatusCode,
+		)
+	}
+
+	return nil
+}
+
+func main() {
 	token := os.Getenv("BOT_TOKEN")
 
 	if token == "" {
@@ -520,13 +563,11 @@ func main() {
 	})
 
 	go func() {
-
 		log.Println("UyMarket Telegram bot started")
 
 		offset := 0
 
 		for {
-
 			updates, err := getUpdates(token, offset)
 
 			if err != nil {
@@ -536,7 +577,6 @@ func main() {
 			}
 
 			for _, update := range updates {
-
 				offset = update.UpdateID + 1
 
 				if update.Message != nil {
@@ -548,45 +588,11 @@ func main() {
 				}
 			}
 		}
-
 	}()
 
 	log.Println("Web server started on port", port)
 
-	log.Fatal(http.ListenAndServe(":"+port, nil))
-}
-func sendToGoogleSheets(data map[string]string) error {
-
-    url := os.Getenv("GOOGLE_SHEETS_URL")
-
-    if url == "" {
-        return fmt.Errorf("GOOGLE_SHEETS_URL не найден")
-    }
-
-    body, err := json.Marshal(data)
-
-    if err != nil {
-        return err
-    }
-
-    resp, err := http.Post(
-        url,
-        "application/json",
-        bytes.NewBuffer(body),
-    )
-
-    if err != nil {
-        return err
-    }
-
-    defer resp.Body.Close()
-
-    if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-        return fmt.Errorf(
-            "Google Apps Script вернул статус %d",
-            resp.StatusCode,
-        )
-    }
-
-    return nil
+	log.Fatal(
+		http.ListenAndServe(":"+port, nil),
+	)
 }
