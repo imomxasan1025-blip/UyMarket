@@ -337,17 +337,47 @@ func processSale(token string, chatID int64, text string) {
 		}
 
 		if text == "✅ Опубликовать" {
-			delete(users, chatID)
-			usersMutex.Unlock()
 
-			sendMessage(
-				token,
-				chatID,
-				"✅ Объявление создано!\n\n"+
-					"Следующим этапом мы подключим базу данных и фотографии, чтобы объявление реально сохранялось в UyMarket.",
-				russianMenu(),
-			)
-			return
+    data := map[string]string{
+        "type":     user.Type,
+        "city":     user.City,
+        "district": user.District,
+        "rooms":    user.Rooms,
+        "area":     user.Area,
+        "floor":    user.Floor,
+        "price":    user.Price,
+    }
+
+    usersMutex.Unlock()
+
+    err := sendToGoogleSheets(data)
+
+    if err != nil {
+
+        sendMessage(
+            token,
+            chatID,
+            "❌ Не удалось сохранить объявление.\n\nПопробуйте ещё раз.",
+            russianMenu(),
+        )
+
+        return
+    }
+
+    usersMutex.Lock()
+    delete(users, chatID)
+    usersMutex.Unlock()
+
+    sendMessage(
+        token,
+        chatID,
+        "✅ Объявление успешно опубликовано!\n\n"+
+            "Оно сохранено в базе UyMarket.",
+        russianMenu(),
+    )
+
+    return
+}
 		}
 
 		usersMutex.Unlock()
@@ -529,4 +559,39 @@ func main() {
 	log.Println("Web server started on port", port)
 
 	log.Fatal(http.ListenAndServe(":"+port, nil))
+}
+func sendToGoogleSheets(data map[string]string) error {
+
+    url := os.Getenv("GOOGLE_SHEETS_URL")
+
+    if url == "" {
+        return fmt.Errorf("GOOGLE_SHEETS_URL не найден")
+    }
+
+    body, err := json.Marshal(data)
+
+    if err != nil {
+        return err
+    }
+
+    resp, err := http.Post(
+        url,
+        "application/json",
+        bytes.NewBuffer(body),
+    )
+
+    if err != nil {
+        return err
+    }
+
+    defer resp.Body.Close()
+
+    if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+        return fmt.Errorf(
+            "Google Apps Script вернул статус %d",
+            resp.StatusCode,
+        )
+    }
+
+    return nil
 }
