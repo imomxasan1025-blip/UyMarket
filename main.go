@@ -21,8 +21,16 @@ type Update struct {
 }
 
 type Message struct {
-	Chat Chat   `json:"chat"`
-	Text string `json:"text"`
+	Chat  Chat    `json:"chat"`
+	Text  string  `json:"text"`
+	Photo []Photo `json:"photo"`
+}
+
+type Photo struct {
+	FileID   string `json:"file_id"`
+	Width    int    `json:"width"`
+	Height   int    `json:"height"`
+	FileSize int    `json:"file_size"`
 }
 
 type Chat struct {
@@ -45,6 +53,7 @@ type UserState struct {
 	Area     string
 	Floor    string
 	Price    string
+	Photos   []string
 }
 
 type Property struct {
@@ -61,14 +70,13 @@ type Property struct {
 }
 
 type PropertiesResponse struct {
-	OK          bool       `json:"ok"`
-	Properties  []Property `json:"properties"`
-	Error       string     `json:"error"`
+	OK         bool       `json:"ok"`
+	Properties []Property `json:"properties"`
+	Error      string     `json:"error"`
 }
 
 var users = make(map[int64]*UserState)
 var usersMutex sync.Mutex
-
 
 func telegramRequest(token, method string, data interface{}) error {
 	body, err := json.Marshal(data)
@@ -93,7 +101,6 @@ func telegramRequest(token, method string, data interface{}) error {
 
 	return nil
 }
-
 
 func sendMessage(token string, chatID int64, text string, keyboard [][]string) {
 	request := map[string]interface{}{
@@ -123,6 +130,20 @@ func sendMessage(token string, chatID int64, text string, keyboard [][]string) {
 	}
 }
 
+func sendPhoto(token string, chatID int64, fileID string, caption string) {
+	request := map[string]interface{}{
+		"chat_id": chatID,
+		"photo":   fileID,
+	}
+
+	if caption != "" {
+		request["caption"] = caption
+	}
+
+	if err := telegramRequest(token, "sendPhoto", request); err != nil {
+		log.Println("Ошибка отправки фото:", err)
+	}
+}
 
 func getUpdates(token string, offset int) ([]Update, error) {
 	url := telegramAPI + token +
@@ -144,7 +165,10 @@ func getUpdates(token string, offset int) ([]Update, error) {
 
 	if !result.OK {
 		if result.Description != "" {
-			return nil, fmt.Errorf("Telegram API error: %s", result.Description)
+			return nil, fmt.Errorf(
+				"Telegram API error: %s",
+				result.Description,
+			)
 		}
 
 		return nil, fmt.Errorf("Telegram API error")
@@ -152,7 +176,6 @@ func getUpdates(token string, offset int) ([]Update, error) {
 
 	return result.Result, nil
 }
-
 
 func russianMenu() [][]string {
 	return [][]string{
@@ -162,7 +185,6 @@ func russianMenu() [][]string {
 	}
 }
 
-
 func uzbekMenu() [][]string {
 	return [][]string{
 		{"🏠 Uy-joy sotib olish", "➕ Uy-joy sotish"},
@@ -170,7 +192,6 @@ func uzbekMenu() [][]string {
 		{"👨‍💼 Menejer", "🇷🇺 Русский"},
 	}
 }
-
 
 func propertyMenu() [][]string {
 	return [][]string{
@@ -182,6 +203,12 @@ func propertyMenu() [][]string {
 	}
 }
 
+func photoMenu() [][]string {
+	return [][]string{
+		{"✅ Готово"},
+		{"❌ Отменить"},
+	}
+}
 
 func startSale(token string, chatID int64) {
 	usersMutex.Lock()
@@ -189,6 +216,7 @@ func startSale(token string, chatID int64) {
 	users[chatID] = &UserState{
 		Step:     1,
 		Language: "ru",
+		Photos:   []string{},
 	}
 
 	usersMutex.Unlock()
@@ -201,8 +229,12 @@ func startSale(token string, chatID int64) {
 	)
 }
 
-
-func processSale(token string, chatID int64, text string) {
+func processSale(
+	token string,
+	chatID int64,
+	text string,
+	photos []Photo,
+) {
 	usersMutex.Lock()
 
 	user, exists := users[chatID]
@@ -334,40 +366,129 @@ func processSale(token string, chatID int64, text string) {
 		user.Price = text
 		user.Step = 8
 
-		summary := fmt.Sprintf(
-			"📋 Проверьте объявление:\n\n"+
-				"🏷 Тип: %s\n"+
-				"📍 Город: %s\n"+
-				"📍 Район: %s\n"+
-				"🛏 Комнаты: %s\n"+
-				"📐 Площадь: %s\n"+
-				"🏢 Этаж: %s\n"+
-				"💰 Цена продавца: %s\n\n"+
-				"Всё правильно?",
-			user.Type,
-			user.City,
-			user.District,
-			user.Rooms,
-			user.Area,
-			user.Floor,
-			user.Price,
-		)
-
 		usersMutex.Unlock()
 
 		sendMessage(
 			token,
 			chatID,
-			summary,
-			[][]string{
-				{"✅ Опубликовать"},
-				{"❌ Отменить"},
-			},
+			"📸 Теперь отправьте фотографии квартиры.\n\n"+
+				"Можно отправить несколько фотографий подряд.\n\n"+
+				"Когда закончите, нажмите «✅ Готово».",
+			photoMenu(),
 		)
 
 	case 8:
 
 		if text == "❌ Отменить" {
+
+			delete(users, chatID)
+
+			usersMutex.Unlock()
+
+			sendMessage(
+				token,
+				chatID,
+				"❌ Объявление отменено.",
+				russianMenu(),
+			)
+
+			return
+		}
+
+		if len(photos) > 0 {
+
+			for _, photo := range photos {
+
+				if photo.FileID != "" {
+					user.Photos = append(
+						user.Photos,
+						photo.FileID,
+					)
+				}
+			}
+
+			count := len(user.Photos)
+
+			usersMutex.Unlock()
+
+			sendMessage(
+				token,
+				chatID,
+				fmt.Sprintf(
+					"📸 Фото получено.\n\n"+
+						"Всего фотографий: %d\n\n"+
+						"Можете отправить ещё или нажмите «✅ Готово».",
+					count,
+				),
+				photoMenu(),
+			)
+
+			return
+		}
+
+		if text == "✅ Готово" {
+
+			if len(user.Photos) == 0 {
+
+				usersMutex.Unlock()
+
+				sendMessage(
+					token,
+					chatID,
+					"📸 Вы ещё не отправили ни одной фотографии.\n\n"+
+						"Отправьте хотя бы одну фотографию.",
+					photoMenu(),
+				)
+
+				return
+			}
+
+			user.Step = 9
+
+			photoCount := len(user.Photos)
+
+			summary := fmt.Sprintf(
+				"📋 Проверьте объявление:\n\n"+
+					"🏷 Тип: %s\n"+
+					"📍 Город: %s\n"+
+					"📍 Район: %s\n"+
+					"🛏 Комнаты: %s\n"+
+					"📐 Площадь: %s\n"+
+					"🏢 Этаж: %s\n"+
+					"💰 Цена продавца: %s\n"+
+					"📸 Фотографий: %d\n\n"+
+					"Всё правильно?",
+				user.Type,
+				user.City,
+				user.District,
+				user.Rooms,
+				user.Area,
+				user.Floor,
+				user.Price,
+				photoCount,
+			)
+
+			usersMutex.Unlock()
+
+			sendMessage(
+				token,
+				chatID,
+				summary,
+				[][]string{
+					{"✅ Опубликовать"},
+					{"❌ Отменить"},
+				},
+			)
+
+			return
+		}
+
+		usersMutex.Unlock()
+
+	case 9:
+
+		if text == "❌ Отменить" {
+
 			delete(users, chatID)
 
 			usersMutex.Unlock()
@@ -384,6 +505,11 @@ func processSale(token string, chatID int64, text string) {
 
 		if text == "✅ Опубликовать" {
 
+			photoString := strings.Join(
+				user.Photos,
+				"\n",
+			)
+
 			data := map[string]string{
 				"type":         user.Type,
 				"city":         user.City,
@@ -393,7 +519,7 @@ func processSale(token string, chatID int64, text string) {
 				"floor":        user.Floor,
 				"price":        user.Price,
 				"buyer_price":  "",
-				"photo":        "",
+				"photo":        photoString,
 			}
 
 			usersMutex.Unlock()
@@ -401,7 +527,11 @@ func processSale(token string, chatID int64, text string) {
 			err := sendToGoogleSheets(data)
 
 			if err != nil {
-				log.Println("Ошибка сохранения объявления:", err)
+
+				log.Println(
+					"Ошибка сохранения объявления:",
+					err,
+				)
 
 				sendMessage(
 					token,
@@ -415,13 +545,16 @@ func processSale(token string, chatID int64, text string) {
 			}
 
 			usersMutex.Lock()
+
 			delete(users, chatID)
+
 			usersMutex.Unlock()
 
 			sendMessage(
 				token,
 				chatID,
 				"✅ Объявление успешно добавлено!\n\n"+
+					"Фотографии сохранены.\n"+
 					"Менеджер установит цену для покупателя.",
 				russianMenu(),
 			)
@@ -432,17 +565,19 @@ func processSale(token string, chatID int64, text string) {
 		usersMutex.Unlock()
 
 	default:
+
 		usersMutex.Unlock()
 	}
 }
-
 
 func getProperties() ([]Property, error) {
 
 	url := os.Getenv("GOOGLE_SHEETS_URL")
 
 	if url == "" {
-		return nil, fmt.Errorf("GOOGLE_SHEETS_URL не найден")
+		return nil, fmt.Errorf(
+			"GOOGLE_SHEETS_URL не найден",
+		)
 	}
 
 	if strings.Contains(url, "?") {
@@ -475,18 +610,22 @@ func getProperties() ([]Property, error) {
 	return result.Properties, nil
 }
 
-
 func showProperties(token string, chatID int64) {
 
 	properties, err := getProperties()
 
 	if err != nil {
-		log.Println("Ошибка получения недвижимости:", err)
+
+		log.Println(
+			"Ошибка получения недвижимости:",
+			err,
+		)
 
 		sendMessage(
 			token,
 			chatID,
-			"❌ Не удалось загрузить объявления.\n\nПопробуйте позже.",
+			"❌ Не удалось загрузить объявления.\n\n"+
+				"Попробуйте позже.",
 			russianMenu(),
 		)
 
@@ -508,9 +647,6 @@ func showProperties(token string, chatID int64) {
 	shown := 0
 
 	for _, property := range properties {
-
-		// Покупателю показываем только цену покупателя.
-		// Цена продавца здесь специально НЕ используется.
 
 		if property.BuyerPrice == "" {
 			continue
@@ -542,6 +678,30 @@ func showProperties(token string, chatID int64) {
 			nil,
 		)
 
+		if property.Photo != "" {
+
+			photoList := strings.Split(
+				property.Photo,
+				"\n",
+			)
+
+			for _, fileID := range photoList {
+
+				fileID = strings.TrimSpace(fileID)
+
+				if fileID == "" {
+					continue
+				}
+
+				sendPhoto(
+					token,
+					chatID,
+					fileID,
+					"",
+				)
+			}
+		}
+
 		shown++
 	}
 
@@ -565,8 +725,12 @@ func showProperties(token string, chatID int64) {
 	)
 }
 
-
-func handleMessage(token string, chatID int64, text string) {
+func handleMessage(
+	token string,
+	chatID int64,
+	text string,
+	photos []Photo,
+) {
 
 	usersMutex.Lock()
 
@@ -575,7 +739,14 @@ func handleMessage(token string, chatID int64, text string) {
 	usersMutex.Unlock()
 
 	if inSale {
-		processSale(token, chatID, text)
+
+		processSale(
+			token,
+			chatID,
+			text,
+			photos,
+		)
+
 		return
 	}
 
@@ -586,7 +757,8 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"🏠 UyMarket\n\nВыберите язык / Tilni tanlang:",
+			"🏠 UyMarket\n\n"+
+				"Выберите язык / Tilni tanlang:",
 			[][]string{
 				{"🇷🇺 Русский", "🇺🇿 O‘zbekcha"},
 			},
@@ -597,7 +769,9 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"🏠 UyMarket\n\nДобро пожаловать!\n\nВыберите действие:",
+			"🏠 UyMarket\n\n"+
+				"Добро пожаловать!\n\n"+
+				"Выберите действие:",
 			russianMenu(),
 		)
 
@@ -606,17 +780,25 @@ func handleMessage(token string, chatID int64, text string) {
 		sendMessage(
 			token,
 			chatID,
-			"🏠 UyMarket\n\nXush kelibsiz!\n\nKerakli bo‘limni tanlang:",
+			"🏠 UyMarket\n\n"+
+				"Xush kelibsiz!\n\n"+
+				"Kerakli bo‘limni tanlang:",
 			uzbekMenu(),
 		)
 
 	case "➕ Продать недвижимость":
 
-		startSale(token, chatID)
+		startSale(
+			token,
+			chatID,
+		)
 
 	case "🏠 Купить недвижимость":
 
-		showProperties(token, chatID)
+		showProperties(
+			token,
+			chatID,
+		)
 
 	case "🔎 Найти квартиру":
 
@@ -624,7 +806,8 @@ func handleMessage(token string, chatID int64, text string) {
 			token,
 			chatID,
 			"🔎 Поиск квартиры\n\n"+
-				"Скоро здесь появится поиск по району, цене, площади и комнатам.",
+				"Скоро здесь появится поиск по району, "+
+				"цене, площади и комнатам.",
 			russianMenu(),
 		)
 
@@ -660,7 +843,10 @@ func handleMessage(token string, chatID int64, text string) {
 
 	case "➕ Uy-joy sotish":
 
-		startSale(token, chatID)
+		startSale(
+			token,
+			chatID,
+		)
 
 	case "🔎 Kvartira qidirish":
 
@@ -703,13 +889,16 @@ func handleMessage(token string, chatID int64, text string) {
 	}
 }
 
-
-func sendToGoogleSheets(data map[string]string) error {
+func sendToGoogleSheets(
+	data map[string]string,
+) error {
 
 	url := os.Getenv("GOOGLE_SHEETS_URL")
 
 	if url == "" {
-		return fmt.Errorf("GOOGLE_SHEETS_URL не найден")
+		return fmt.Errorf(
+			"GOOGLE_SHEETS_URL не найден",
+		)
 	}
 
 	body, err := json.Marshal(data)
@@ -730,7 +919,9 @@ func sendToGoogleSheets(data map[string]string) error {
 
 	defer resp.Body.Close()
 
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+	if resp.StatusCode < 200 ||
+		resp.StatusCode >= 300 {
+
 		return fmt.Errorf(
 			"Google Apps Script вернул статус %d",
 			resp.StatusCode,
@@ -740,13 +931,14 @@ func sendToGoogleSheets(data map[string]string) error {
 	return nil
 }
 
-
 func main() {
 
 	token := os.Getenv("BOT_TOKEN")
 
 	if token == "" {
-		log.Fatal("BOT_TOKEN не найден")
+		log.Fatal(
+			"BOT_TOKEN не найден",
+		)
 	}
 
 	port := os.Getenv("PORT")
@@ -755,31 +947,49 @@ func main() {
 		port = "10000"
 	}
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintln(w, "UyMarket bot is running!")
-	})
+	http.HandleFunc(
+		"/",
+		func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintln(
+				w,
+				"UyMarket bot is running!",
+			)
+		},
+	)
 
 	go func() {
 
-		log.Println("UyMarket Telegram bot started")
+		log.Println(
+			"UyMarket Telegram bot started",
+		)
 
 		offset := 0
 
 		for {
 
-			updates, err := getUpdates(token, offset)
+			updates, err := getUpdates(
+				token,
+				offset,
+			)
 
 			if err != nil {
-				log.Println("Telegram error:", err)
 
-				time.Sleep(5 * time.Second)
+				log.Println(
+					"Telegram error:",
+					err,
+				)
+
+				time.Sleep(
+					5 * time.Second,
+				)
 
 				continue
 			}
 
 			for _, update := range updates {
 
-				offset = update.UpdateID + 1
+				offset =
+					update.UpdateID + 1
 
 				if update.Message != nil {
 
@@ -787,6 +997,7 @@ func main() {
 						token,
 						update.Message.Chat.ID,
 						update.Message.Text,
+						update.Message.Photo,
 					)
 				}
 			}
@@ -794,9 +1005,15 @@ func main() {
 
 	}()
 
-	log.Println("Web server started on port", port)
+	log.Println(
+		"Web server started on port",
+		port,
+	)
 
 	log.Fatal(
-		http.ListenAndServe(":"+port, nil),
+		http.ListenAndServe(
+			":"+port,
+			nil,
+		),
 	)
 }
